@@ -1,0 +1,47 @@
+name: Backfill Historical Data
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'How many days to backfill'
+        required: true
+        default: '365'
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Backfill Pipeline
+        env:
+          OPENWEATHER_KEY:   ${{ secrets.OPENWEATHER_KEY }}
+          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+          AQICN_TOKEN:       ${{ secrets.AQICN_TOKEN }}
+          CITY:              ${{ secrets.CITY }}
+          LAT:               ${{ secrets.LAT }}
+          LON:               ${{ secrets.LON }}
+        run: python backfill.py --days ${{ github.event.inputs.days }}
+
+      - name: Print success message
+        run: echo "Backfill completed successfully for ${{ github.event.inputs.days }} days"

@@ -142,7 +142,16 @@ def run(days: int = 365):
     print(f"  Feature df shape: {df.shape}")
 
     print("Storing in Hopsworks...")
-    project = hopsworks.login(api_key_value=HOPSWORKS_KEY)
+    HOPSWORKS_HOST = os.getenv("HOPSWORKS_HOST") or "eu-west.cloud.hopsworks.ai"
+    HOPSWORKS_PROJECT = os.getenv("HOPSWORKS_PROJECT") or "aqi_project_10pearls"
+    HOPSWORKS_PORT = int(os.getenv("HOPSWORKS_PORT") or 443)
+    
+    project = hopsworks.login(
+         host=HOPSWORKS_HOST,
+         port=HOPSWORKS_PORT,
+         project=HOPSWORKS_PROJECT,
+         api_key_value=HOPSWORKS_KEY,
+)
     fs = project.get_feature_store()
 
     fg = fs.get_or_create_feature_group(

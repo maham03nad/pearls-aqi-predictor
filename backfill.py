@@ -16,12 +16,16 @@ import numpy as np
 from datetime import datetime, timedelta
 import hopsworks
 
-OPENWEATHER_KEY = os.getenv("OPENWEATHER_KEY", "YOUR_OWM_KEY")
-HOPSWORKS_KEY   = os.getenv("HOPSWORKS_API_KEY", "YOUR_HW_KEY")
-CITY            = os.getenv("CITY", "karachi")
-LAT             = float(os.getenv("LAT", "24.8607"))
-LON             = float(os.getenv("LON", "67.0011"))
+OPENWEATHER_KEY = os.getenv("OPENWEATHER_KEY")
+HOPSWORKS_KEY   = os.getenv("HOPSWORKS_API_KEY")
+CITY = os.getenv("CITY") or "Karachi"
 
+def get_float_env(name, default):
+    value = os.getenv(name)
+    return float(value) if value not in (None, "") else default
+
+LAT = get_float_env("LAT", 24.8607)
+LON = get_float_env("LON", 67.0011)
 
 def fetch_historical_aqi(lat, lon, start_dt: datetime, end_dt: datetime) -> list:
     """

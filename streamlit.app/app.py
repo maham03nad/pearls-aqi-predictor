@@ -3,7 +3,7 @@ Streamlit Dashboard
 Runs directly on Streamlit Cloud without separate FastAPI backend.
 
 Run locally:
-    streamlit run app.py
+    streamlit run streamlit.app/app.py
 """
 
 import os
@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
+import shap
 from datetime import datetime, timedelta
 
 import hopsworks
@@ -23,7 +24,8 @@ try:
 except Exception:
     pass
 
-#  CONFIG 
+
+# ─── CONFIG ─────────────────────────────────────────────
 
 HOPSWORKS_KEY = os.getenv("HOPSWORKS_API_KEY")
 OPENWEATHER_KEY = os.getenv("OPENWEATHER_KEY")
@@ -35,6 +37,7 @@ CITY = os.getenv("CITY") or "karachi"
 def get_float_env(name, default):
     value = os.getenv(name)
     return float(value) if value not in (None, "") else default
+
 
 LAT = get_float_env("LAT", 24.8607)
 LON = get_float_env("LON", 67.0011)
@@ -52,7 +55,16 @@ AQI_THRESHOLDS = [
     (500, "Hazardous", "#7e0023"),
 ]
 
-#  PAGE CONFIG 
+FEATURE_COLS = [
+    "pm25", "pm10", "o3", "no2", "so2", "co",
+    "temp", "humidity", "pressure", "wind_speed", "wind_deg",
+    "hour", "day_of_week", "month", "is_weekend",
+    "hour_sin", "hour_cos", "month_sin", "month_cos",
+    "aqi_change_rate", "aqi_rolling_6h", "aqi_rolling_24h",
+]
+
+
+# ─── PAGE CONFIG ────────────────────────────────────────
 
 st.set_page_config(
     page_title="AQI Predictor",
@@ -62,7 +74,7 @@ st.set_page_config(
 )
 
 
-#  CUSTOM CSS 
+# ─── CUSTOM CSS ─────────────────────────────────────────
 
 st.markdown(
     """
@@ -105,14 +117,35 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-#  MODEL LOADING
+
+# ─── MODEL LOADING ──────────────────────────────────────
 
 @st.cache_resource(show_spinner=False)
 def load_model():
-    """Load trained model from Hopsworks Model Registry."""
+    """
+    Load trained model.
+    First tries local model files, then Hopsworks Model Registry.
+    """
 
+    # Local model fallback paths
+    local_model_paths = [
+        "models",
+        "streamlit.app/models",
+        "../models",
+    ]
+
+    for folder in local_model_paths:
+        for model_file in ["GradientBoost.pkl", "RandomForest.pkl", "Ridge.pkl"]:
+            local_path = os.path.join(folder, model_file)
+            if os.path.exists(local_path):
+                try:
+                    model = joblib.load(local_path)
+                    return model
+                except Exception:
+                    pass
+
+    # Hopsworks Model Registry
     if not HOPSWORKS_KEY:
-        st.warning("Missing HOPSWORKS_API_KEY. Forecast will use fallback logic.")
         return None
 
     try:
@@ -130,22 +163,23 @@ def load_model():
         for model_file in ["GradientBoost.pkl", "RandomForest.pkl", "Ridge.pkl"]:
             path = os.path.join(model_dir, model_file)
             if os.path.exists(path):
-                return joblib.load(path)
+                model = joblib.load(path)
+                return model
 
-        st.warning("No trained model file found in Hopsworks model registry.")
         return None
 
-    except Exception as e:
-        st.warning(f"Could not load model from Hopsworks: {e}")
+    except Exception:
         return None
 
-# DATA FETCHING 
+
+# ─── AQI HELPERS ────────────────────────────────────────
 
 def get_aqi_category(aqi: float):
     for limit, label, color in AQI_THRESHOLDS:
         if aqi <= limit:
             return label, color
     return "Hazardous", "#7e0023"
+
 
 def get_health_advice(category: str) -> str:
     advice = {
@@ -158,25 +192,34 @@ def get_health_advice(category: str) -> str:
     }
     return advice.get(category, "Check local guidelines.")
 
+
+# ─── DATA FETCHING ──────────────────────────────────────
+
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_current_data() -> dict:
-    """Fetch current AQI and weather data directly."""
+    """
+    Fetch current AQI and weather data directly.
+    Does not expose API keys in UI error messages.
+    """
 
     if not OPENWEATHER_KEY:
-        raise ValueError("Missing OPENWEATHER_KEY")
+        raise ValueError("Missing OPENWEATHER_KEY in secrets.")
 
     # AQICN first
     try:
         if not AQICN_TOKEN:
-            raise ValueError("Missing AQICN_TOKEN")
+            raise ValueError("Missing AQICN_TOKEN in secrets.")
 
         aqi_url = f"https://api.waqi.info/feed/{CITY}/?token={AQICN_TOKEN}"
         aqi_resp = requests.get(aqi_url, timeout=10)
-        aqi_resp.raise_for_status()
+
+        if aqi_resp.status_code != 200:
+            raise ValueError("AQICN request failed.")
+
         aqi_json = aqi_resp.json()
 
         if aqi_json.get("status") != "ok":
-            raise ValueError(f"AQICN error: {aqi_json}")
+            raise ValueError("AQICN returned invalid response.")
 
         iaqi = aqi_json["data"].get("iaqi", {})
         current_aqi = float(aqi_json["data"].get("aqi", 0))
@@ -189,18 +232,23 @@ def fetch_current_data() -> dict:
         co = float(iaqi.get("co", {}).get("v", 0))
 
     except Exception:
-        # OpenWeather fallback
+        # OpenWeather Air Pollution fallback
         ap_url = (
             f"https://api.openweathermap.org/data/2.5/air_pollution"
             f"?lat={LAT}&lon={LON}&appid={OPENWEATHER_KEY}"
         )
+
         ap_resp = requests.get(ap_url, timeout=10)
-        ap_resp.raise_for_status()
+
+        if ap_resp.status_code != 200:
+            raise ValueError("OpenWeather Air Pollution API request failed. Check OPENWEATHER_KEY.")
+
         ap_json = ap_resp.json()
 
         comp = ap_json["list"][0]["components"]
         aqi_raw = ap_json["list"][0]["main"]["aqi"]
 
+        # OpenWeather scale 1-5 mapped to approximate US AQI style values
         aqi_map = {1: 25, 2: 75, 3: 125, 4: 175, 5: 300}
         current_aqi = float(aqi_map.get(aqi_raw, 50))
 
@@ -218,7 +266,10 @@ def fetch_current_data() -> dict:
     )
 
     w_resp = requests.get(w_url, timeout=10)
-    w_resp.raise_for_status()
+
+    if w_resp.status_code != 200:
+        raise ValueError("OpenWeather Weather API request failed. Check OPENWEATHER_KEY.")
+
     w_json = w_resp.json()
 
     temp = float(w_json["main"]["temp"])
@@ -258,6 +309,9 @@ def fetch_current_data() -> dict:
         "aqi_rolling_24h": current_aqi,
     }
 
+
+# ─── PREDICTION HELPERS ─────────────────────────────────
+
 def build_feature_vector(data: dict, future_time: datetime) -> list:
     fh = future_time.hour
     fday = future_time.weekday()
@@ -288,6 +342,7 @@ def build_feature_vector(data: dict, future_time: datetime) -> list:
         data["aqi_rolling_24h"],
     ]
 
+
 def predict_72_hours(current_data: dict) -> list:
     model = load_model()
     now = datetime.utcnow()
@@ -298,7 +353,11 @@ def predict_72_hours(current_data: dict) -> list:
         features = build_feature_vector(current_data, future_time)
 
         if model is not None:
-            pred_aqi = float(model.predict([features])[0])
+            try:
+                pred_aqi = float(model.predict([features])[0])
+            except Exception:
+                noise = np.random.normal(0, 3)
+                pred_aqi = current_data["current_aqi"] + noise
         else:
             noise = np.random.normal(0, 3)
             pred_aqi = current_data["current_aqi"] + noise
@@ -321,7 +380,8 @@ def predict_72_hours(current_data: dict) -> list:
 def get_forecast_cached(current_data: dict):
     return predict_72_hours(current_data)
 
-# CHARTS 
+
+# ─── CHARTS ─────────────────────────────────────────────
 
 def make_gauge(aqi_value: float, color: str):
     fig = go.Figure(go.Indicator(
@@ -385,6 +445,7 @@ def make_pollutant_chart(pollutants: dict):
     )
     return fig
 
+
 def make_forecast_chart(predictions: list):
     df = pd.DataFrame(predictions)
     df["timestamp"] = pd.to_datetime(df["timestamp"])
@@ -433,6 +494,7 @@ def make_forecast_chart(predictions: list):
     )
     return fig
 
+
 def build_daily_summary(predictions: list):
     days_dict = {}
 
@@ -460,11 +522,79 @@ def build_daily_summary(predictions: list):
 
     return daily
 
-#  MAIN APP
+
+def make_shap_importance_chart(current_data: dict):
+    """
+    Creates a SHAP feature importance bar chart using 72-hour forecast feature vectors.
+    """
+
+    model = load_model()
+
+    if model is None:
+        return None
+
+    try:
+        now = datetime.utcnow()
+
+        rows = []
+        for h in range(1, 73):
+            future_time = now + timedelta(hours=h)
+            rows.append(build_feature_vector(current_data, future_time))
+
+        X = pd.DataFrame(rows, columns=FEATURE_COLS)
+
+        try:
+            explainer = shap.TreeExplainer(model)
+            shap_values = explainer.shap_values(X)
+        except Exception:
+            explainer = shap.Explainer(model.predict, X)
+            shap_values = explainer(X).values
+
+        if isinstance(shap_values, list):
+            shap_values = shap_values[0]
+
+        importance = np.abs(shap_values).mean(axis=0)
+
+        imp_df = pd.DataFrame({
+            "feature": FEATURE_COLS,
+            "importance": importance,
+        }).sort_values("importance", ascending=True).tail(12)
+
+        fig = go.Figure(go.Bar(
+            x=imp_df["importance"],
+            y=imp_df["feature"],
+            orientation="h",
+            text=[f"{v:.3f}" for v in imp_df["importance"]],
+            textposition="outside",
+        ))
+
+        fig.update_layout(
+            title="SHAP Feature Importance",
+            xaxis_title="Mean |SHAP value|",
+            yaxis_title="Feature",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(13,20,40,0.8)",
+            font=dict(color="white"),
+            height=420,
+            margin=dict(l=100, r=40, t=60, b=40),
+            xaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
+            yaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
+        )
+
+        return fig
+
+    except Exception:
+        return None
+
+
+# ─── MAIN APP ───────────────────────────────────────────
 
 def main():
     st.title("🌬️ AQI Predictor Dashboard")
-    st.caption(f"Live air quality monitoring and 3-day forecast • Updated: {datetime.utcnow().strftime('%H:%M UTC')}")
+    st.caption(
+        f"Live air quality monitoring and 3-day forecast • "
+        f"Updated: {datetime.utcnow().strftime('%H:%M UTC')}"
+    )
 
     try:
         current = fetch_current_data()
@@ -476,6 +606,13 @@ def main():
 
     label, color = get_aqi_category(current["current_aqi"])
     advice = get_health_advice(label)
+
+    model = load_model()
+    if model is None:
+        st.warning(
+            "Model could not be loaded. Forecast is using fallback estimation. "
+            "Check Hopsworks model registry or local model files."
+        )
 
     if current["current_aqi"] > 150:
         st.markdown(
@@ -545,6 +682,18 @@ def main():
 
     st.divider()
 
+    st.markdown("### 🔍 SHAP Feature Importance")
+    st.caption("Explains which features are most influencing the 72-hour AQI predictions.")
+
+    shap_fig = make_shap_importance_chart(current)
+
+    if shap_fig is not None:
+        st.plotly_chart(shap_fig, use_container_width=True)
+    else:
+        st.info("SHAP explanation unavailable because the trained model could not be loaded.")
+
+    st.divider()
+
     with st.expander("📖 AQI Scale Reference"):
         scale_data = {
             "AQI Range": ["0–50", "51–100", "101–150", "151–200", "201–300", "301–500"],
@@ -569,7 +718,8 @@ def main():
         st.dataframe(pd.DataFrame(scale_data), use_container_width=True, hide_index=True)
 
     st.markdown("---")
-    st.caption("Powered by AQICN + OpenWeatherMap + Hopsworks + Streamlit")
+    st.caption("Powered by AQICN + OpenWeatherMap + Hopsworks + SHAP + Streamlit")
+
 
 if __name__ == "__main__":
     main()

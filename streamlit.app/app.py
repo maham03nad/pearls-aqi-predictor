@@ -108,6 +108,29 @@ st.markdown(
         margin: 10px 0;
     }
 
+    .very-unhealthy-banner {
+        background: linear-gradient(90deg, #8f3f97, #5e2a84);
+        color: white;
+        padding: 14px 22px;
+        border-radius: 10px;
+        font-weight: 700;
+        text-align: center;
+        margin: 10px 0;
+        border: 1px solid rgba(255,255,255,0.25);
+    }
+
+    .hazard-banner {
+        background: linear-gradient(90deg, #7e0023, #b00020);
+        color: white;
+        padding: 16px 24px;
+        border-radius: 12px;
+        font-weight: 800;
+        text-align: center;
+        margin: 12px 0;
+        border: 2px solid #ffccd5;
+        box-shadow: 0 0 18px rgba(255, 0, 0, 0.35);
+    }
+
     .small-note {
         opacity: 0.75;
         font-size: 13px;
@@ -127,7 +150,6 @@ def load_model():
     First tries local model files, then Hopsworks Model Registry.
     """
 
-    # Local model fallback paths
     local_model_paths = [
         "models",
         "streamlit.app/models",
@@ -144,7 +166,6 @@ def load_model():
                 except Exception:
                     pass
 
-    # Hopsworks Model Registry
     if not HOPSWORKS_KEY:
         return None
 
@@ -188,9 +209,19 @@ def get_health_advice(category: str) -> str:
         "Unhealthy for Sensitive Groups": "Sensitive groups should reduce outdoor activity.",
         "Unhealthy": "Everyone should reduce prolonged outdoor exertion.",
         "Very Unhealthy": "Health alert — everyone should avoid outdoor activity.",
-        "Hazardous": "Emergency conditions. Everyone should stay indoors.",
+        "Hazardous": "Emergency conditions. Stay indoors and avoid all outdoor activity.",
     }
     return advice.get(category, "Check local guidelines.")
+
+
+def get_alert_level(aqi: float) -> str:
+    if aqi > 300:
+        return "hazardous"
+    if aqi > 200:
+        return "very_unhealthy"
+    if aqi > 150:
+        return "unhealthy"
+    return "normal"
 
 
 # ─── DATA FETCHING ──────────────────────────────────────
@@ -205,7 +236,6 @@ def fetch_current_data() -> dict:
     if not OPENWEATHER_KEY:
         raise ValueError("Missing OPENWEATHER_KEY in secrets.")
 
-    # AQICN first
     try:
         if not AQICN_TOKEN:
             raise ValueError("Missing AQICN_TOKEN in secrets.")
@@ -232,7 +262,6 @@ def fetch_current_data() -> dict:
         co = float(iaqi.get("co", {}).get("v", 0))
 
     except Exception:
-        # OpenWeather Air Pollution fallback
         ap_url = (
             f"https://api.openweathermap.org/data/2.5/air_pollution"
             f"?lat={LAT}&lon={LON}&appid={OPENWEATHER_KEY}"
@@ -248,7 +277,6 @@ def fetch_current_data() -> dict:
         comp = ap_json["list"][0]["components"]
         aqi_raw = ap_json["list"][0]["main"]["aqi"]
 
-        # OpenWeather scale 1-5 mapped to approximate US AQI style values
         aqi_map = {1: 25, 2: 75, 3: 125, 4: 175, 5: 300}
         current_aqi = float(aqi_map.get(aqi_raw, 50))
 
@@ -259,7 +287,6 @@ def fetch_current_data() -> dict:
         so2 = float(comp.get("so2", 0))
         co = float(comp.get("co", 0))
 
-    # Weather
     w_url = (
         f"https://api.openweathermap.org/data/2.5/weather"
         f"?lat={LAT}&lon={LON}&appid={OPENWEATHER_KEY}&units=metric"
@@ -468,6 +495,7 @@ def make_forecast_chart(predictions: list):
         (100, "Moderate", "#ffff00"),
         (150, "USG", "#ff7e00"),
         (200, "Unhealthy", "#ff0000"),
+        (300, "Very Unhealthy", "#8f3f97"),
     ]
 
     for val, label, color in thresholds:
@@ -488,7 +516,7 @@ def make_forecast_chart(predictions: list):
         plot_bgcolor="rgba(13,20,40,0.8)",
         font=dict(color="white"),
         xaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
-        yaxis=dict(gridcolor="rgba(255,255,255,0.05)", range=[0, 350]),
+        yaxis=dict(gridcolor="rgba(255,255,255,0.05)", range=[0, 500]),
         height=380,
         hovermode="x unified",
     )
@@ -524,10 +552,6 @@ def build_daily_summary(predictions: list):
 
 
 def make_shap_importance_chart(current_data: dict):
-    """
-    Creates a SHAP feature importance bar chart using 72-hour forecast feature vectors.
-    """
-
     model = load_model()
 
     if model is None:
@@ -614,10 +638,49 @@ def main():
             "Check Hopsworks model registry or local model files."
         )
 
-    if current["current_aqi"] > 150:
+    # ── Current AQI Alert System ──
+    alert_level = get_alert_level(current["current_aqi"])
+
+    if alert_level == "hazardous":
         st.markdown(
-            f'<div class="alert-banner">🚨 AIR QUALITY ALERT — {label.upper()} — Avoid outdoor activities!</div>',
+            f"""
+            <div class="hazard-banner">
+                ☠️ HAZARDOUS AQI ALERT — AQI {current["current_aqi"]:.0f}<br>
+                Stay indoors, close windows, use masks or air purifiers, and avoid all outdoor activity.
+            </div>
+            """,
             unsafe_allow_html=True,
+        )
+
+    elif alert_level == "very_unhealthy":
+        st.markdown(
+            f"""
+            <div class="very-unhealthy-banner">
+                🚨 VERY UNHEALTHY AIR QUALITY — AQI {current["current_aqi"]:.0f}<br>
+                Everyone should avoid prolonged outdoor exposure.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    elif alert_level == "unhealthy":
+        st.markdown(
+            f"""
+            <div class="alert-banner">
+                🚨 AIR QUALITY ALERT — {label.upper()} — Avoid outdoor activities!
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # ── Forecast Hazardous Alert ──
+    hazardous_hours = [p for p in predictions if p["aqi"] > 300]
+
+    if hazardous_hours:
+        first_hazard = hazardous_hours[0]
+        st.error(
+            f"☠️ Forecast warning: Hazardous AQI expected around "
+            f"{first_hazard['timestamp']} with AQI {first_hazard['aqi']}."
         )
 
     city_name = CITY.capitalize()

@@ -408,6 +408,22 @@ models/                  Saved models and SHAP image
 ```
 ---
 
+## Screenshots
+
+### Streamlit Dashboard
+![Streamlit Dashboard](assets/dashboard.png)
+
+### 72-Hour AQI Forecast
+![72-Hour AQI Forecast](assets/forecast.png)
+
+### SHAP Feature Importance
+![SHAP Feature Importance](assets/shap.png)
+
+### Hopsworks Feature Store
+![Hopsworks Feature Store](assets/hopsworks_feature_store.png)
+
+---
+
 ## Final Submission Summary
 
 This project includes:

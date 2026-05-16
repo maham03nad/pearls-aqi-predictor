@@ -388,7 +388,8 @@ The dashboard displays:
 The Streamlit dashboard is deployed on Streamlit Cloud.
 
 Dashboard Link:  
-https://pearls-aqi-predictor-vanjmdtr4gorcqmmmpdhf.streamlit.app
+
+https://pearls-aqi-predictor-vanjmdtr4gorcqmmpmpdhf.streamlit.app/
 
 The feature pipeline and training pipeline are automated using GitHub Actions.
 

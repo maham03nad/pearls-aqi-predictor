@@ -22,6 +22,7 @@ import hopsworks
 try:
     from dotenv import load_dotenv
     load_dotenv()
+    
 except Exception:
     pass
 
@@ -60,8 +61,7 @@ FEATURE_COLS = [
     "hour_sin", "hour_cos", "month_sin", "month_cos",
     "aqi_change_rate", "aqi_rolling_6h", "aqi_rolling_24h",
 ]
-
-# PAGE CONFIG
+# PAGE CONFIG=URATION & CUSTOM CSS
 st.set_page_config(
     page_title="AQI Predictor",
     page_icon="🌬️",
@@ -133,8 +133,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# FILE HELPERS
-
 def find_existing_file(possible_paths):
     """Return the first existing file path from a list of possible paths."""
     for path in possible_paths:
@@ -142,7 +140,7 @@ def find_existing_file(possible_paths):
             return path
     return None
 
-#LOADING MODEL
+#LOADING MODELS
 
 @st.cache_resource(show_spinner=False)
 def load_model():
@@ -193,7 +191,7 @@ def load_model():
     except Exception:
         return None
 
-# AQI HELPERS
+# AQI PREDICTION
 
 def get_aqi_category(aqi: float):
     for limit, label, color in AQI_THRESHOLDS:
@@ -223,44 +221,63 @@ def get_alert_level(aqi: float) -> str:
         return "unhealthy"
     return "normal"
 
-#FETCHING DATA
-
+# DATA FETCHING
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_current_data() -> dict:
     """
-    Fetch current AQI and weather data directly.
-    API keys are not exposed in UI error messages.
+    Fetch current AQI and weather data.
+
+    Primary source:
+    - AQICN for AQI and pollutant values
+
+    Fallback source:
+    - OpenWeather Air Pollution API for missing pollutant values
+    - OpenWeather Weather API for weather values
     """
 
     if not OPENWEATHER_KEY:
         raise ValueError("Missing OPENWEATHER_KEY in secrets.")
 
+    def safe_iaqi_value(iaqi_data, key):
+        """Return AQICN pollutant value if available, otherwise NaN."""
+        value = iaqi_data.get(key, {}).get("v", None)
+        return float(value) if value is not None else np.nan
+
+    current_aqi = np.nan
+    pm25 = np.nan
+    pm10 = np.nan
+    o3 = np.nan
+    no2 = np.nan
+    so2 = np.nan
+    co = np.nan
+
+    # 1. Try AQICN first
     try:
-        if not AQICN_TOKEN:
-            raise ValueError("Missing AQICN_TOKEN in secrets.")
+        if AQICN_TOKEN:
+            aqi_url = f"https://api.waqi.info/feed/{CITY}/?token={AQICN_TOKEN}"
+            aqi_resp = requests.get(aqi_url, timeout=10)
 
-        aqi_url = f"https://api.waqi.info/feed/{CITY}/?token={AQICN_TOKEN}"
-        aqi_resp = requests.get(aqi_url, timeout=10)
+            if aqi_resp.status_code == 200:
+                aqi_json = aqi_resp.json()
 
-        if aqi_resp.status_code != 200:
-            raise ValueError("AQICN request failed.")
+                if aqi_json.get("status") == "ok":
+                    aqi_data = aqi_json.get("data", {})
+                    iaqi = aqi_data.get("iaqi", {})
 
-        aqi_json = aqi_resp.json()
+                    current_aqi = float(aqi_data.get("aqi", np.nan))
 
-        if aqi_json.get("status") != "ok":
-            raise ValueError("AQICN returned invalid response.")
-
-        iaqi = aqi_json["data"].get("iaqi", {})
-        current_aqi = float(aqi_json["data"].get("aqi", 0))
-
-        pm25 = float(iaqi.get("pm25", {}).get("v", 0))
-        pm10 = float(iaqi.get("pm10", {}).get("v", 0))
-        o3 = float(iaqi.get("o3", {}).get("v", 0))
-        no2 = float(iaqi.get("no2", {}).get("v", 0))
-        so2 = float(iaqi.get("so2", {}).get("v", 0))
-        co = float(iaqi.get("co", {}).get("v", 0))
+                    pm25 = safe_iaqi_value(iaqi, "pm25")
+                    pm10 = safe_iaqi_value(iaqi, "pm10")
+                    o3 = safe_iaqi_value(iaqi, "o3")
+                    no2 = safe_iaqi_value(iaqi, "no2")
+                    so2 = safe_iaqi_value(iaqi, "so2")
+                    co = safe_iaqi_value(iaqi, "co")
 
     except Exception:
+        pass
+
+    # 2. Use OpenWeather Air Pollution API as fallback
+    try:
         ap_url = (
             f"https://api.openweathermap.org/data/2.5/air_pollution"
             f"?lat={LAT}&lon={LON}&appid={OPENWEATHER_KEY}"
@@ -268,24 +285,50 @@ def fetch_current_data() -> dict:
 
         ap_resp = requests.get(ap_url, timeout=10)
 
-        if ap_resp.status_code != 200:
-            raise ValueError("OpenWeather Air Pollution API request failed. Check OPENWEATHER_KEY.")
+        if ap_resp.status_code == 200:
+            ap_json = ap_resp.json()
+            ap_item = ap_json["list"][0]
+            comp = ap_item["components"]
 
-        ap_json = ap_resp.json()
+            # AQICN AQI is still missing, map OpenWeather AQI scale to approximate AQI
+            if np.isnan(current_aqi):
+                aqi_raw = ap_item["main"]["aqi"]
+                aqi_map = {
+                    1: 25,
+                    2: 75,
+                    3: 125,
+                    4: 175,
+                    5: 300,
+                }
+                current_aqi = float(aqi_map.get(aqi_raw, 50))
 
-        comp = ap_json["list"][0]["components"]
-        aqi_raw = ap_json["list"][0]["main"]["aqi"]
+            # Fill only missing pollutant values
+            if np.isnan(pm25):
+                pm25 = float(comp.get("pm2_5", 0))
+            if np.isnan(pm10):
+                pm10 = float(comp.get("pm10", 0))
+            if np.isnan(o3):
+                o3 = float(comp.get("o3", 0))
+            if np.isnan(no2):
+                no2 = float(comp.get("no2", 0))
+            if np.isnan(so2):
+                so2 = float(comp.get("so2", 0))
+            if np.isnan(co):
+                co = float(comp.get("co", 0))
 
-        aqi_map = {1: 25, 2: 75, 3: 125, 4: 175, 5: 300}
-        current_aqi = float(aqi_map.get(aqi_raw, 50))
+    except Exception:
+        pass
 
-        pm25 = float(comp.get("pm2_5", 0))
-        pm10 = float(comp.get("pm10", 0))
-        o3 = float(comp.get("o3", 0))
-        no2 = float(comp.get("no2", 0))
-        so2 = float(comp.get("so2", 0))
-        co = float(comp.get("co", 0))
+    # 3. Final cleanup for any still-missing values
+    current_aqi = 0 if np.isnan(current_aqi) else current_aqi
+    pm25 = 0 if np.isnan(pm25) else pm25
+    pm10 = 0 if np.isnan(pm10) else pm10
+    o3 = 0 if np.isnan(o3) else o3
+    no2 = 0 if np.isnan(no2) else no2
+    so2 = 0 if np.isnan(so2) else so2
+    co = 0 if np.isnan(co) else co
 
+    # 4. Fetch current weather from OpenWeather
     weather_url = (
         f"https://api.openweathermap.org/data/2.5/weather"
         f"?lat={LAT}&lon={LON}&appid={OPENWEATHER_KEY}&units=metric"
@@ -310,32 +353,32 @@ def fetch_current_data() -> dict:
     month = now.month
 
     return {
-        "current_aqi": current_aqi,
-        "pm25": pm25,
-        "pm10": pm10,
-        "o3": o3,
-        "no2": no2,
-        "so2": so2,
-        "co": co,
-        "temp": temp,
-        "humidity": humidity,
-        "pressure": pressure,
-        "wind_speed": wind_speed,
-        "wind_deg": wind_deg,
-        "hour": hour,
-        "day_of_week": day,
-        "month": month,
+        "current_aqi": float(current_aqi),
+        "pm25": float(pm25),
+        "pm10": float(pm10),
+        "o3": float(o3),
+        "no2": float(no2),
+        "so2": float(so2),
+        "co": float(co),
+        "temp": float(temp),
+        "humidity": float(humidity),
+        "pressure": float(pressure),
+        "wind_speed": float(wind_speed),
+        "wind_deg": float(wind_deg),
+        "hour": int(hour),
+        "day_of_week": int(day),
+        "month": int(month),
         "is_weekend": int(day >= 5),
         "hour_sin": float(np.sin(2 * np.pi * hour / 24)),
         "hour_cos": float(np.cos(2 * np.pi * hour / 24)),
         "month_sin": float(np.sin(2 * np.pi * month / 12)),
         "month_cos": float(np.cos(2 * np.pi * month / 12)),
         "aqi_change_rate": 0.0,
-        "aqi_rolling_6h": current_aqi,
-        "aqi_rolling_24h": current_aqi,
+        "aqi_rolling_6h": float(current_aqi),
+        "aqi_rolling_24h": float(current_aqi),
     }
 
-# PREDICTION
+# PREDICTION FOR 72 HOURS
 
 def build_feature_vector(data: dict, future_time: datetime) -> list:
     future_hour = future_time.hour
@@ -667,7 +710,7 @@ def main():
             unsafe_allow_html=True,
         )
 
-    # AQI alert system based on forecast values
+    # Forecast-based AQI alert system
     forecast_max = max(p["aqi"] for p in predictions)
     forecast_peak = max(predictions, key=lambda p: p["aqi"])
 
@@ -757,6 +800,7 @@ def main():
 
     st.divider()
 
+    # Explainability section
     shap_tab, lime_tab = st.tabs(["SHAP Explanation", "LIME Explanation"])
 
     with shap_tab:

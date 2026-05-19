@@ -1,6 +1,6 @@
 """
 Streamlit Dashboard
-Runs directly on Streamlit Cloud without separate FastAPI backend.
+Runs directly on Streamlit Cloud without a separate FastAPI backend.
 
 Run locally:
     streamlit run streamlit.app/app.py
@@ -12,6 +12,7 @@ import requests
 import numpy as np
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 import plotly.graph_objects as go
 import shap
 from datetime import datetime, timedelta
@@ -23,9 +24,6 @@ try:
     load_dotenv()
 except Exception:
     pass
-
-
-# ─── CONFIG ─────────────────────────────────────────────
 
 HOPSWORKS_KEY = os.getenv("HOPSWORKS_API_KEY")
 OPENWEATHER_KEY = os.getenv("OPENWEATHER_KEY")
@@ -63,18 +61,13 @@ FEATURE_COLS = [
     "aqi_change_rate", "aqi_rolling_6h", "aqi_rolling_24h",
 ]
 
-
-# ─── PAGE CONFIG ────────────────────────────────────────
-
+# PAGE CONFIG
 st.set_page_config(
     page_title="AQI Predictor",
     page_icon="🌬️",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-
-
-# ─── CUSTOM CSS ─────────────────────────────────────────
 
 st.markdown(
     """
@@ -140,8 +133,16 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# FILE HELPERS
 
-# ─── MODEL LOADING ──────────────────────────────────────
+def find_existing_file(possible_paths):
+    """Return the first existing file path from a list of possible paths."""
+    for path in possible_paths:
+        if os.path.exists(path):
+            return path
+    return None
+
+#LOADING MODEL
 
 @st.cache_resource(show_spinner=False)
 def load_model():
@@ -177,8 +178,8 @@ def load_model():
             api_key_value=HOPSWORKS_KEY,
         )
 
-        mr = project.get_model_registry()
-        hw_model = mr.get_model("aqi_predictor", version=1)
+        model_registry = project.get_model_registry()
+        hw_model = model_registry.get_model("aqi_predictor", version=1)
         model_dir = hw_model.download()
 
         for model_file in ["GradientBoost.pkl", "RandomForest.pkl", "Ridge.pkl"]:
@@ -192,8 +193,7 @@ def load_model():
     except Exception:
         return None
 
-
-# ─── AQI HELPERS ────────────────────────────────────────
+# AQI HELPERS
 
 def get_aqi_category(aqi: float):
     for limit, label, color in AQI_THRESHOLDS:
@@ -223,14 +223,13 @@ def get_alert_level(aqi: float) -> str:
         return "unhealthy"
     return "normal"
 
-
-# ─── DATA FETCHING ──────────────────────────────────────
+#FETCHING DATA
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_current_data() -> dict:
     """
     Fetch current AQI and weather data directly.
-    Does not expose API keys in UI error messages.
+    API keys are not exposed in UI error messages.
     """
 
     if not OPENWEATHER_KEY:
@@ -287,23 +286,23 @@ def fetch_current_data() -> dict:
         so2 = float(comp.get("so2", 0))
         co = float(comp.get("co", 0))
 
-    w_url = (
+    weather_url = (
         f"https://api.openweathermap.org/data/2.5/weather"
         f"?lat={LAT}&lon={LON}&appid={OPENWEATHER_KEY}&units=metric"
     )
 
-    w_resp = requests.get(w_url, timeout=10)
+    weather_resp = requests.get(weather_url, timeout=10)
 
-    if w_resp.status_code != 200:
+    if weather_resp.status_code != 200:
         raise ValueError("OpenWeather Weather API request failed. Check OPENWEATHER_KEY.")
 
-    w_json = w_resp.json()
+    weather_json = weather_resp.json()
 
-    temp = float(w_json["main"]["temp"])
-    humidity = float(w_json["main"]["humidity"])
-    pressure = float(w_json["main"]["pressure"])
-    wind_speed = float(w_json["wind"]["speed"])
-    wind_deg = float(w_json["wind"].get("deg", 0))
+    temp = float(weather_json["main"]["temp"])
+    humidity = float(weather_json["main"]["humidity"])
+    pressure = float(weather_json["main"]["pressure"])
+    wind_speed = float(weather_json["wind"]["speed"])
+    wind_deg = float(weather_json["wind"].get("deg", 0))
 
     now = datetime.utcnow()
     hour = now.hour
@@ -336,13 +335,12 @@ def fetch_current_data() -> dict:
         "aqi_rolling_24h": current_aqi,
     }
 
-
-# ─── PREDICTION HELPERS ─────────────────────────────────
+# PREDICTION
 
 def build_feature_vector(data: dict, future_time: datetime) -> list:
-    fh = future_time.hour
-    fday = future_time.weekday()
-    fmon = future_time.month
+    future_hour = future_time.hour
+    future_day = future_time.weekday()
+    future_month = future_time.month
 
     return [
         data["pm25"],
@@ -356,14 +354,14 @@ def build_feature_vector(data: dict, future_time: datetime) -> list:
         data["pressure"],
         data["wind_speed"],
         data["wind_deg"],
-        fh,
-        fday,
-        fmon,
-        int(fday >= 5),
-        float(np.sin(2 * np.pi * fh / 24)),
-        float(np.cos(2 * np.pi * fh / 24)),
-        float(np.sin(2 * np.pi * fmon / 12)),
-        float(np.cos(2 * np.pi * fmon / 12)),
+        future_hour,
+        future_day,
+        future_month,
+        int(future_day >= 5),
+        float(np.sin(2 * np.pi * future_hour / 24)),
+        float(np.cos(2 * np.pi * future_hour / 24)),
+        float(np.sin(2 * np.pi * future_month / 12)),
+        float(np.cos(2 * np.pi * future_month / 12)),
         data["aqi_change_rate"],
         data["aqi_rolling_6h"],
         data["aqi_rolling_24h"],
@@ -407,8 +405,7 @@ def predict_72_hours(current_data: dict) -> list:
 def get_forecast_cached(current_data: dict):
     return predict_72_hours(current_data)
 
-
-# ─── CHARTS ─────────────────────────────────────────────
+# CHARTS
 
 def make_gauge(aqi_value: float, color: str):
     fig = go.Figure(go.Indicator(
@@ -610,14 +607,11 @@ def make_shap_importance_chart(current_data: dict):
     except Exception:
         return None
 
-
-# ─── MAIN APP ───────────────────────────────────────────
-
 def main():
     st.title("🌬️ AQI Predictor Dashboard")
     st.caption(
         f"Live air quality monitoring and 3-day forecast • "
-        f"Updated: {datetime.utcnow().strftime('%H:%M UTC')}"
+        f"Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"
     )
 
     try:
@@ -638,7 +632,7 @@ def main():
             "Check Hopsworks model registry or local model files."
         )
 
-    # ── Current AQI Alert System ──
+    # Current AQI alert system
     alert_level = get_alert_level(current["current_aqi"])
 
     if alert_level == "hazardous":
@@ -673,15 +667,33 @@ def main():
             unsafe_allow_html=True,
         )
 
-    # ── Forecast Hazardous Alert ──
-    hazardous_hours = [p for p in predictions if p["aqi"] > 300]
+    # AQI alert system based on forecast values
+    forecast_max = max(p["aqi"] for p in predictions)
+    forecast_peak = max(predictions, key=lambda p: p["aqi"])
 
-    if hazardous_hours:
-        first_hazard = hazardous_hours[0]
+    if forecast_max > 300:
         st.error(
-            f"☠️ Forecast warning: Hazardous AQI expected around "
-            f"{first_hazard['timestamp']} with AQI {first_hazard['aqi']}."
+            f"☠️ Forecast warning: Hazardous AQI is expected around "
+            f"{forecast_peak['timestamp']} with AQI {forecast_max:.0f}. "
+            "Stay indoors and avoid all outdoor activity."
         )
+    elif forecast_max > 200:
+        st.warning(
+            f"🚨 Forecast warning: AQI may reach Very Unhealthy level around "
+            f"{forecast_peak['timestamp']} with AQI {forecast_max:.0f}."
+        )
+    elif forecast_max > 150:
+        st.warning(
+            f"⚠️ AQI may reach {forecast_max:.0f} in the next 72 hours "
+            f"around {forecast_peak['timestamp']} — Unhealthy level!"
+        )
+    elif forecast_max > 100:
+        st.info(
+            f"ℹ️ AQI is predicted to reach {forecast_max:.0f} in the next 72 hours "
+            f"around {forecast_peak['timestamp']} — Sensitive groups alert."
+        )
+    else:
+        st.success("✅ No major risk expected in the next 72 hours.")
 
     city_name = CITY.capitalize()
 
@@ -745,15 +757,48 @@ def main():
 
     st.divider()
 
-    st.markdown("### 🔍 SHAP Feature Importance")
-    st.caption("Explains which features are most influencing the 72-hour AQI predictions.")
+    shap_tab, lime_tab = st.tabs(["SHAP Explanation", "LIME Explanation"])
 
-    shap_fig = make_shap_importance_chart(current)
+    with shap_tab:
+        st.markdown("### 🔍 SHAP Feature Importance")
+        st.caption("Explains which features influence the 72-hour AQI predictions.")
 
-    if shap_fig is not None:
-        st.plotly_chart(shap_fig, use_container_width=True)
-    else:
-        st.info("SHAP explanation unavailable because the trained model could not be loaded.")
+        shap_fig = make_shap_importance_chart(current)
+
+        if shap_fig is not None:
+            st.plotly_chart(shap_fig, use_container_width=True)
+        else:
+            st.info("SHAP explanation unavailable because the trained model could not be loaded.")
+
+    with lime_tab:
+        st.markdown("### LIME Local Explanation")
+        st.caption("Explains local feature importance for a sample AQI prediction.")
+
+        lime_png_path = find_existing_file([
+            "models/lime_explanation.png",
+            "streamlit.app/models/lime_explanation.png",
+            "../models/lime_explanation.png",
+        ])
+
+        lime_html_path = find_existing_file([
+            "models/lime_explanation.html",
+            "streamlit.app/models/lime_explanation.html",
+            "../models/lime_explanation.html",
+        ])
+
+        if lime_png_path:
+            st.image(
+                lime_png_path,
+                caption="LIME local explanation for a sample AQI prediction"
+            )
+        else:
+            st.warning("LIME image not found. Please run training_pipeline.py first.")
+
+        if lime_html_path:
+            with st.expander("View interactive LIME explanation"):
+                with open(lime_html_path, "r", encoding="utf-8") as f:
+                    lime_html = f.read()
+                components.html(lime_html, height=600, scrolling=True)
 
     st.divider()
 
@@ -781,7 +826,7 @@ def main():
         st.dataframe(pd.DataFrame(scale_data), use_container_width=True, hide_index=True)
 
     st.markdown("---")
-    st.caption("Powered by AQICN + OpenWeatherMap + Hopsworks + SHAP + Streamlit")
+    st.caption("Powered by AQICN + OpenWeatherMap + Hopsworks + SHAP + LIME + Streamlit")
 
 
 if __name__ == "__main__":

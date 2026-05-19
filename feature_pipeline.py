@@ -11,8 +11,11 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import hopsworks
+from dotenv import load_dotenv
 
-# ─── CONFIG ─────────────────────────────────────────────
+load_dotenv()
+
+#  CONFIG 
 
 AQICN_TOKEN = os.getenv("AQICN_TOKEN")
 OPENWEATHER_KEY = os.getenv("OPENWEATHER_KEY")
@@ -117,14 +120,14 @@ def engineer_features(aqi_data: dict, weather_data: dict) -> dict:
         "month_sin": float(month_sin),
         "month_cos": float(month_cos),
 
-        # Backfill/training feature group has these columns too.
-        # For live single-row insert, future targets are unknown.
-        "aqi_change_rate": 0.0,
-        "aqi_rolling_6h": float(aqi),
-        "aqi_rolling_24h": float(aqi),
-        "target_aqi_3h": float(aqi),
-        "target_aqi_24h": float(aqi),
-        "target_aqi_72h": float(aqi),
+       # # To insert live  single-row,future targets are unknown.
+       # # We keep target columns as NaN to avoid any target leakage.
+       "aqi_change_rate": 0.0,
+       "aqi_rolling_6h": float(aqi),
+       "aqi_rolling_24h": float(aqi),
+       "target_aqi_3h": float("nan"),
+       "target_aqi_24h": float("nan"),
+       "target_aqi_72h": float("nan"),
     }
 
 

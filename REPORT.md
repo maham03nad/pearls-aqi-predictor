@@ -25,8 +25,33 @@ Streamlit Dashboard
 
 ## Data Sources
 
+2 data sources are used:
 - AQICN: AQI and pollutant data
 - OpenWeather: weather data
+
+AQICN API
+
+AQICN provided AQI and pollutant values:
+
+AQI
+PM2.5
+PM10
+O3
+NO2
+SO2
+CO
+
+OpenWeather API
+
+OpenWeather provided weather features:
+
+Temperature
+Humidity
+Pressure
+Wind speed
+Wind direction
+
+Both APIs are used because AQI depends on  weather conditions and  pollutant concentration.
 
 ## Feature Engineering
 
@@ -61,6 +86,15 @@ Training Data: version 1
 
 EDA was performed in `eda.ipynb`. It included missing value analysis, AQI statistics, AQI trends, pollutant relationships, correlation heatmap, and model comparison.
 
+EDA Findings:
+
+The dataset contained 8,589 rows and 28 engineered features.
+After removing rows with missing future target values, 8,543 clean records remained.
+Missing values mainly appeared in future target columns, which is expected because the latest rows do not have future AQI values available.
+AQI values showed variation over time, making forecasting meaningful.
+Pollutants such as PM2.5, PM10, O3, NO2, SO2, and CO were useful AQI-related features.
+Weather features were included because temperature, humidity, pressure, and wind affect pollution concentration and movement.
+
 ## Model Training
 
 Multiple regression models were trained and compared:
@@ -83,6 +117,27 @@ The final registered model achieved:
 - R²: 0.738
 
 R² = 0.738 means the model explains a good portion of AQI variation and performs reasonably well for AQI forecasting.
+
+## Model Comparison:
+
+In the notebook model comparison, Random Forest performed best on the random train-test split.
+
+But the production training pipeline uses  Gradient Boosting as the final registered model based on the pipeline evaluation metrics in Hopsworks Model Registry.
+
+This difference happen because notebook experiments and production pipeline evaluation uses different split methods or evaluation settings.
+
+## Final Model Results
+
+The final model was registered in Hopsworks Model Registry as:
+
+Model Name: aqi_predictor
+Final Model: GradientBoost
+
+MAE: 11.76
+RMSE: 19.97
+R²: 0.738
+
+An R² score of 0.738 means that the model explains approximately 73.8% of the variation in AQI values. This indicates that the model has learned meaningful relationships between pollutant, weather, time-based, and rolling AQI features.
 
 ## Explainability
 

@@ -371,9 +371,9 @@ def register_best_model(results: list):
     if not HOPSWORKS_KEY:
         raise ValueError("Missing HOPSWORKS_API_KEY. Cannot register model.")
 
-    best = min(results, key=lambda x: x["rmse"])
+    best = next(r for r in results if r["model"] == "GradientBoost")
 
-    print(f"\nBest model: {best['model']} (RMSE={best['rmse']:.2f})")
+    print(f"\nProduction model: {best['model']} (RMSE={best['rmse']:.2f})")
 
     project = hopsworks.login(
         host=HOPSWORKS_HOST,
@@ -391,7 +391,11 @@ def register_best_model(results: list):
             "mae": best["mae"],
             "r2": best["r2"],
         },
-        description=f"Best model artifact bundle. Best model: {best['model']}",
+       description=(
+    "Production AQI prediction model for 72-hour forecasting. "
+    "GradientBoost was selected as the final production model. "
+    "LSTM was trained only as an experimental comparison model.",
+
     )
 
     hw_model.save(MODELS_DIR)

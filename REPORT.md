@@ -1,74 +1,60 @@
-# Project Report
-# AQI Predictor
+#  Project Report---AQI Predictor
 
-Air pollution is a one of the major environmental and public health concern in large cities such as Karachi. Air Quality Index (AQI) changes due to many facrors like pollutant concentration, weather conditions, time of day, traffic patterns, and other external factors.
+This project predicts Air Quality Index (AQI) for Karachi using pollutant, weather, time-based, and rolling AQI features.
 
-The main purpose of this project is to build an end-to-end AQI prediction system that can collect real-time AQI and weather data, create ML features, train forecasting models, and predict future AQI values.
+## System Architecture
 
-It is designed to support AQI forecasting for future time windows such as 3 hours, 24 hours, and 72 hours. It also includes an interactive dashboard, model explainability, feature store, and model registry.
----
+The project collects AQI and pollutant data from AQICN and weather data from OpenWeather. The data is processed through feature engineering and stored in Hopsworks Feature Store. ML models are trained through a training pipeline and the final model is registered in Hopsworks Model Registry. The predictions are displayed through a Streamlit dashboard.
 
-## 2. Project Objectives
+## Data Sources
 
-The main objectives of this project are:
+- AQICN: AQI and pollutant data
+- OpenWeather: weather data
 
-- Collect AQI and weather data from external APIs.
-- Clean and process raw environmental data.
-- Engineer time-based, weather-based, pollutant-based, and rolling features.
-- Store processed features in a feature store.
-- Train and compare machine learning models.
-- Select a production model using a suitable validation approach.
-- Register the selected model in a model registry.
-- Build an API for AQI prediction.
-- Create an interactive dashboard for current and forecasted AQI.
-- Add SHAP and LIME explainability.
-- Provide forecast-based AQI alerts.
----
+## Feature Engineering
 
-## 3. Data Sources
+The project created pollutant features, weather features, time-based features, cyclic features, rolling AQI averages, and future AQI target columns.
 
-The project uses multiple data sources:
+## EDA
 
-| Source | Purpose |
-|---|---|
-| AQICN API | Current AQI and pollutant values |
-| OpenWeather API | Current weather data such as temperature, humidity, pressure, and wind |
-| Open-Meteo Archive | Historical weather data for backfilling and model training |
-| Hopsworks Feature Store | Stores processed model-ready features |
+EDA was performed in `eda.ipynb`. It included missing value analysis, AQI statistics, AQI trends, pollutant relationships, correlation heatmap, and model comparison.
 
-The feature pipeline fetches live AQI data from AQICN and live weather data from OpenWeather, then combines them into one structured feature row.
+## Model Training
 
----
+Multiple regression models were trained and compared:
 
-## 4. System Architecture
+- Linear Regression
+- Ridge Regression
+- Random Forest
+- Gradient Boosting
+- LSTM
 
-The project follows this end-to-end machine learning architecture:
+The final production model was selected based on evaluation metrics and registered in Hopsworks Model Registry.
 
-```text
-AQICN API + OpenWeather API + Historical Data
-                    ↓
-              Data Collection
-                    ↓
-              Data Cleaning
-                    ↓
-            Feature Engineering
-                    ↓
-        Hopsworks Feature Store
-                    ↓
-            Training Pipeline
-                    ↓
-            Model Comparison
-                    ↓
-              Model Registry
-                    ↓
-          FastAPI Prediction API
-                    ↓
-           Streamlit Dashboard
-                    ↓
-      SHAP/LIME Explainability
-                    ↓
-        Forecast-Based AQI Alerts
-```
----
+## Results
 
-# 
+The final registered model achieved:
+
+- MAE: 11.76
+- RMSE: 19.97
+- R²: 0.738
+
+R² = 0.738 means the model explains a good portion of AQI variation and performs reasonably well for AQI forecasting.
+
+## Explainability
+
+SHAP feature importance was used to explain global model behavior. LIME explanation was also added to explain an individual prediction.
+
+## Deployment and Automation
+
+The dashboard was deployed using Streamlit Cloud. GitHub Actions were used to automate the feature pipeline and training pipeline.
+
+- Feature pipeline runs hourly.
+- Training pipeline runs daily.
+- Backfill pipeline can be triggered manually.
+
+## Limitations
+
+- AQI can be affected by external factors not included in the dataset.
+- Live rows do not contain future target values because future AQI is unknown at insertion time.
+- Historical future target values are generated from past data using time-based shifting.

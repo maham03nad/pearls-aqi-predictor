@@ -48,7 +48,7 @@ HOPSWORKS_HOST = os.getenv("HOPSWORKS_HOST") or "eu-west.cloud.hopsworks.ai"
 HOPSWORKS_PROJECT = os.getenv("HOPSWORKS_PROJECT") or "aqi_project_10pearls"
 HOPSWORKS_PORT = int(os.getenv("HOPSWORKS_PORT") or 443)
 
-TARGET_COL = "target_aqi_3h"
+TARGET_COL = "target_aqi_72h"
 
 FEATURE_COLS = [
     "pm25", "pm10", "o3", "no2", "so2", "co",
@@ -94,7 +94,7 @@ def prepare_data(df: pd.DataFrame):
     """
 
     df = df.sort_values("timestamp")
-    df = df.dropna(subset=FEATURE_COLS + [TARGET_COL])
+    df = df.dropna(subset=FEATURE_COLS + [TARGET_COL]).copy()
 
     X = df[FEATURE_COLS].values
     y = df[TARGET_COL].values

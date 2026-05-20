@@ -78,7 +78,9 @@ Live feature rows store future target columns as NaN because future AQI is unkno
 The engineered data was stored in Hopsworks Feature Store.
 
 Feature Group: aqi_features
+
 Feature View: aqi_feature_view
+
 Training Data: version 1
 
 
@@ -89,10 +91,14 @@ EDA was performed in `eda.ipynb`. It included missing value analysis, AQI statis
 EDA Findings:
 
 The dataset contained 8,589 rows and 28 engineered features.
+
 After removing rows with missing future target values, 8,543 clean records remained.
+
 Missing values mainly appeared in future target columns, which is expected because the latest rows do not have future AQI values available.
 AQI values showed variation over time, making forecasting meaningful.
+
 Pollutants such as PM2.5, PM10, O3, NO2, SO2, and CO were useful AQI-related features.
+
 Weather features were included because temperature, humidity, pressure, and wind affect pollution concentration and movement.
 
 ## Model Training
@@ -134,7 +140,9 @@ Model Name: aqi_predictor
 Final Model: GradientBoost
 
 MAE: 11.76
+
 RMSE: 19.97
+
 R²: 0.738
 
 An R² score of 0.738 means that the model explains approximately 73.8% of the variation in AQI values. This indicates that the model has learned meaningful relationships between pollutant, weather, time-based, and rolling AQI features.

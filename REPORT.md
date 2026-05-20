@@ -35,10 +35,15 @@ The project created pollutant features, weather features, time-based features, c
 The project created contins 28 features including:
 
 Pollutant features: PM2.5, PM10, O3, NO2, SO2, CO
+
 Weather features: temperature, humidity, pressure, wind speed, wind direction
+
 Time-based features: hour, day of week, month, weekend flag
+
 Cyclical features: hour sine/cosine and month sine/cosine
+
 Rolling features: AQI rolling average over 6 hours and 24 hours
+
 Target columns: target_aqi_3h, target_aqi_24h, target_aqi_72h
 
 Live feature rows store future target columns as NaN because future AQI is unknown at insertion time. Historical target values are created from past data using time-based shifting

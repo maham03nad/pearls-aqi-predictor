@@ -29,7 +29,7 @@ Streamlit Dashboard
 - AQICN: AQI and pollutant data
 - OpenWeather: weather data
 
-AQICN API
+AQICN API:
 
 AQICN provided AQI and pollutant values:
 
@@ -41,7 +41,7 @@ NO2
 SO2
 CO
 
-OpenWeather API
+OpenWeather API:
 
 OpenWeather provided weather features:
 

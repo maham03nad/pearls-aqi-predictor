@@ -426,12 +426,9 @@ def register_best_model(results: list):
             "mae": best["mae"],
             "r2": best["r2"],
         },
-        description=(
-            "Production AQI prediction model for 72-hour forecasting. "
-            "GradientBoost was selected as the final production model. "
-            "LSTM was trained only as an experimental comparison model."
+        description=f"Best model: {best['model']}"
         ),
-    )
+    
 
     hw_model.save(MODELS_DIR)
 

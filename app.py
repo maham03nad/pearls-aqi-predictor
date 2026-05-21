@@ -1,18 +1,18 @@
 """
-Root Streamlit entrypoint.
-
-Streamlit Cloud runs this file by default.
-It forwards execution to the actual dashboard file:
-    streamlit.app/app.py
+Root Streamlit entrypoint for Streamlit Cloud.
+The actual dashboard code is inside streamlit.app/app.py.
 """
 
-import runpy
+import sys
 from pathlib import Path
 
+APP_DIR = Path(__file__).parent / "streamlit.app"
 
-APP_PATH = Path(__file__).parent / "streamlit.app" / "app.py"
+if not APP_DIR.exists():
+    raise FileNotFoundError(f"Dashboard folder not found: {APP_DIR}")
 
-if not APP_PATH.exists():
-    raise FileNotFoundError(f"Dashboard file not found: {APP_PATH}")
+sys.path.insert(0, str(APP_DIR))
 
-runpy.run_path(str(APP_PATH), run_name="__main__")
+from app import main
+
+main()

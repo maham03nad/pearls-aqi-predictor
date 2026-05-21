@@ -132,7 +132,8 @@ def prepare_data(df: pd.DataFrame):
         X,
         y,
         test_size=0.2,
-        shuffle=False,
+        shuffle=True,
+        random_state=42,
     )
 
     print(f"[OK] Training data shape: {X_train.shape}")

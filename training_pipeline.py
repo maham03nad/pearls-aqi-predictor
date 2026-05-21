@@ -2,14 +2,13 @@
 STEP 3: Training Pipeline
 
 This pipeline:
-- Loads features and targets from Hopsworks Feature Store
+- Loads AQI features from Hopsworks Feature Store
 - Uses target_aqi_72h as the final forecasting target
-- Trains Random Forest, Gradient Boosting, Ridge Regression, and LSTM models
+- Trains Random Forest, Gradient Boosting, Ridge Regression, and LSTM
 - Evaluates models using RMSE, MAE, and R²
-- Saves trained model artifacts locally
-- Generates SHAP summary and waterfall plots
-- Generates LIME explanation as HTML and PNG
-- Registers GradientBoost as the final production model in Hopsworks Model Registry
+- Saves model artifacts locally
+- Generates SHAP and LIME explanations
+- Registers GradientBoost as the production model in Hopsworks Model Registry
 
 Run:
     python training_pipeline.py
@@ -53,28 +52,43 @@ HOPSWORKS_PROJECT = os.getenv("HOPSWORKS_PROJECT") or "aqi_project_10pearls"
 HOPSWORKS_PORT = int(os.getenv("HOPSWORKS_PORT") or 443)
 
 # Final dashboard forecast target
-
 TARGET_COL = "target_aqi_72h"
 
 FEATURE_COLS = [
-    "pm25", "pm10", "o3", "no2", "so2", "co",
-    "temp", "humidity", "pressure", "wind_speed", "wind_deg",
-    "hour", "day_of_week", "month", "is_weekend",
-    "hour_sin", "hour_cos", "month_sin", "month_cos",
-    "aqi_change_rate", "aqi_rolling_6h", "aqi_rolling_24h",
+    "pm25",
+    "pm10",
+    "o3",
+    "no2",
+    "so2",
+    "co",
+    "temp",
+    "humidity",
+    "pressure",
+    "wind_speed",
+    "wind_deg",
+    "hour",
+    "day_of_week",
+    "month",
+    "is_weekend",
+    "hour_sin",
+    "hour_cos",
+    "month_sin",
+    "month_cos",
+    "aqi_change_rate",
+    "aqi_rolling_6h",
+    "aqi_rolling_24h",
 ]
 
 MODELS_DIR = "models"
 os.makedirs(MODELS_DIR, exist_ok=True)
 
-
-# LOAD DATA FROM FEATURE STORE
+# LOAD DATA
 
 def load_features() -> pd.DataFrame:
     """Load AQI features from Hopsworks Feature Store."""
 
     if not HOPSWORKS_KEY:
-        raise ValueError("Missing HOPSWORKS_API_KEY. Please set it in your .env file.")
+        raise ValueError("Missing HOPSWORKS_API_KEY. Please set it in your .env or GitHub Secrets.")
 
     project = hopsworks.login(
         host=HOPSWORKS_HOST,
@@ -84,40 +98,47 @@ def load_features() -> pd.DataFrame:
     )
 
     fs = project.get_feature_store()
-    fg = fs.get_feature_group("aqi_features", version=1)
+
+    fg = fs.get_feature_group(
+        name="aqi_features",
+        version=1,
+    )
 
     df = fg.read()
-    print(f"[OK] Loaded {len(df)} rows from feature store")
+
+    print(f"[OK] Loaded {len(df)} rows from Hopsworks Feature Store")
+    print(f"[OK] Columns: {list(df.columns)}")
 
     return df
 
-
-# PREPARE TRAIN/TEST DATA
+# PREPARE DATA
 
 def prepare_data(df: pd.DataFrame):
     """
     Prepare train/test data using time-based split.
 
-    shuffle=False is important because AQI forecasting is a time-series problem.
-    Random split can cause future information leakage.
+    AQI forecasting is time-dependent, so shuffle=False is used.
+    Live rows with missing future targets are removed before training.
     """
 
     df = df.sort_values("timestamp")
 
-    # Drop rows where live/future target is missing.
-    # Live feature rows have target columns as NaN because future AQI is unknown.
     df = df.dropna(subset=FEATURE_COLS + [TARGET_COL]).copy()
 
     X = df[FEATURE_COLS].values
     y = df[TARGET_COL].values
 
-    return train_test_split(
+    X_train, X_test, y_train, y_test = train_test_split(
         X,
         y,
         test_size=0.2,
         shuffle=False,
     )
 
+    print(f"[OK] Training data shape: {X_train.shape}")
+    print(f"[OK] Testing data shape: {X_test.shape}")
+
+    return X_train, X_test, y_train, y_test
 
 # EVALUATION
 
@@ -128,7 +149,7 @@ def evaluate(name: str, y_true, y_pred) -> dict:
     mae = float(mean_absolute_error(y_true, y_pred))
     r2 = float(r2_score(y_true, y_pred))
 
-    print(f"  [{name}] RMSE={rmse:.2f} MAE={mae:.2f} R²={r2:.4f}")
+    print(f"[{name}] RMSE={rmse:.2f} MAE={mae:.2f} R²={r2:.4f}")
 
     return {
         "model": name,
@@ -136,15 +157,13 @@ def evaluate(name: str, y_true, y_pred) -> dict:
         "mae": mae,
         "r2": r2,
     }
-
-
 # SKLEARN MODELS
 
 def train_sklearn_models(X_train, X_test, y_train, y_test):
-    """Train Random Forest, Gradient Boosting, and Ridge Regression models."""
+    """Train RandomForest, GradientBoost, and Ridge models."""
 
     results = []
-    trained = {}
+    trained_models = {}
 
     models = {
         "RandomForest": RandomForestRegressor(
@@ -164,39 +183,43 @@ def train_sklearn_models(X_train, X_test, y_train, y_test):
     }
 
     for name, model in models.items():
-        print(f"Training {name}...")
+        print(f"\nTraining {name}...")
 
         model.fit(X_train, y_train)
+
         preds = model.predict(X_test)
 
         metrics = evaluate(name, y_test, preds)
         results.append(metrics)
-        trained[name] = model
+        trained_models[name] = model
 
         model_path = os.path.join(MODELS_DIR, f"{name}.pkl")
         joblib.dump(model, model_path)
 
-        print(f"  [OK] Saved model -> {model_path}")
+        print(f"[OK] Saved {name} model -> {model_path}")
 
-    return results, trained
-
+    return results, trained_models
 
 # LSTM MODEL
 
 def train_lstm(X_train, X_test, y_train, y_test, seq_len=24):
     """
-    Train an LSTM model using sequential AQI feature windows.
+    Train LSTM as an experimental comparison model.
 
-    LSTM is trained as an experimental comparison model.
-    It is not registered as the final production model.
+    LSTM is not used as the final production model because the Streamlit dashboard
+    uses sklearn .pkl artifacts and SHAP/LIME are more stable with sklearn models.
     """
 
+    print("\nTraining LSTM experimental model...")
+
     scaler = StandardScaler()
+
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
     def make_sequences(X, y, seq):
-        xs, ys = [], []
+        xs = []
+        ys = []
 
         for i in range(seq, len(X)):
             xs.append(X[i - seq:i])
@@ -205,14 +228,18 @@ def train_lstm(X_train, X_test, y_train, y_test, seq_len=24):
         return np.array(xs), np.array(ys)
 
     if len(X_train_scaled) < seq_len + 10 or len(X_test_scaled) < seq_len + 1:
-        print("  [LSTM] Not enough data. Skipping LSTM training.")
+        print("[WARNING] Not enough data for LSTM sequences. Skipping LSTM.")
         return None, None
 
     X_train_seq, y_train_seq = make_sequences(X_train_scaled, y_train, seq_len)
     X_test_seq, y_test_seq = make_sequences(X_test_scaled, y_test, seq_len)
 
     model = Sequential([
-        LSTM(64, input_shape=(seq_len, X_train.shape[1]), return_sequences=True),
+        LSTM(
+            64,
+            input_shape=(seq_len, X_train.shape[1]),
+            return_sequences=True,
+        ),
         Dropout(0.2),
         LSTM(32),
         Dropout(0.2),
@@ -220,15 +247,15 @@ def train_lstm(X_train, X_test, y_train, y_test, seq_len=24):
         Dense(1),
     ])
 
-    model.compile(optimizer="adam", loss="mse")
+    model.compile(
+        optimizer="adam",
+        loss="mse",
+    )
 
     early_stop = EarlyStopping(
         patience=5,
         restore_best_weights=True,
     )
-
-    print("Training LSTM...")
-
     model.fit(
         X_train_seq,
         y_train_seq,
@@ -240,6 +267,7 @@ def train_lstm(X_train, X_test, y_train, y_test, seq_len=24):
     )
 
     preds = model.predict(X_test_seq).flatten()
+
     metrics = evaluate("LSTM", y_test_seq, preds)
 
     lstm_model_path = os.path.join(MODELS_DIR, "lstm_model.h5")
@@ -248,30 +276,28 @@ def train_lstm(X_train, X_test, y_train, y_test, seq_len=24):
     model.save(lstm_model_path)
     joblib.dump(scaler, lstm_scaler_path)
 
-    print(f"  [OK] Saved LSTM model -> {lstm_model_path}")
-    print(f"  [OK] Saved LSTM scaler -> {lstm_scaler_path}")
+    print(f"[OK] Saved LSTM model -> {lstm_model_path}")
+    print(f"[OK] Saved LSTM scaler -> {lstm_scaler_path}")
 
     return metrics, model
 
-
 # SHAP EXPLAINABILITY
 
-def explain_model(model, X_test, feature_names):
+def explain_model_shap(model, X_test, feature_names):
     """
-    Generate SHAP summary plot and SHAP waterfall plot.
+    Generate SHAP summary plot and waterfall plot for GradientBoost.
 
-    SHAP summary explains global feature importance.
-    SHAP waterfall explains one individual prediction.
-
-    Note:
-    SHAP TreeExplainer works best for tree-based sklearn models.
-    LSTM explainability would require a different deep learning explainer.
+    SHAP explains which features influence AQI predictions.
     """
 
-    print("Computing SHAP explanations...")
+    print("\nComputing SHAP explanations...")
 
     try:
-        X_sample = pd.DataFrame(X_test[:200], columns=feature_names)
+        X_sample = pd.DataFrame(
+            X_test[:200],
+            columns=feature_names,
+        )
+
         X_single = X_sample.iloc[[0]]
 
         try:
@@ -301,11 +327,15 @@ def explain_model(model, X_test, feature_names):
             show=False,
         )
 
-        summary_path = os.path.join(MODELS_DIR, "shap_summary.png")
-        plt.savefig(summary_path, bbox_inches="tight", dpi=150)
+        shap_summary_path = os.path.join(MODELS_DIR, "shap_summary.png")
+        plt.savefig(
+            shap_summary_path,
+            bbox_inches="tight",
+            dpi=150,
+        )
         plt.close()
 
-        print(f"  [OK] SHAP summary plot saved -> {summary_path}")
+        print(f"[OK] SHAP summary plot saved -> {shap_summary_path}")
 
         shap.waterfall_plot(
             shap.Explanation(
@@ -317,30 +347,40 @@ def explain_model(model, X_test, feature_names):
             show=False,
         )
 
-        waterfall_path = os.path.join(MODELS_DIR, "shap_waterfall_sample.png")
-        plt.savefig(waterfall_path, bbox_inches="tight", dpi=150)
+        shap_waterfall_path = os.path.join(MODELS_DIR, "shap_waterfall_sample.png")
+        plt.savefig(
+            shap_waterfall_path,
+            bbox_inches="tight",
+            dpi=150,
+        )
         plt.close()
 
-        print(f"  [OK] SHAP waterfall plot saved -> {waterfall_path}")
+        print(f"[OK] SHAP waterfall plot saved -> {shap_waterfall_path}")
 
     except Exception as e:
-        print(f"  [WARNING] SHAP explanation skipped: {e}")
-
+        print(f"[WARNING] SHAP explanation skipped: {e}")
 
 # LIME EXPLAINABILITY
 
-def run_lime_explanation(model, X_train, X_test, feature_names):
+def explain_model_lime(model, X_train, X_test, feature_names):
     """
-    Generate LIME explanation for one test prediction.
+    Generate LIME explanation for one sample prediction.
 
-    LIME explains local feature importance for an individual prediction.
+    LIME provides local feature importance for a single prediction.
     """
 
-    print("Running LIME explanation...")
+    print("\nRunning LIME explanation...")
 
     try:
-        X_train_df = pd.DataFrame(X_train, columns=feature_names)
-        X_test_df = pd.DataFrame(X_test, columns=feature_names)
+        X_train_df = pd.DataFrame(
+            X_train,
+            columns=feature_names,
+        )
+
+        X_test_df = pd.DataFrame(
+            X_test,
+            columns=feature_names,
+        )
 
         explainer = LimeTabularExplainer(
             training_data=X_train_df.values,
@@ -363,23 +403,26 @@ def run_lime_explanation(model, X_train, X_test, feature_names):
         explanation.save_to_file(lime_html_path)
 
         fig = explanation.as_pyplot_figure()
-        fig.savefig(lime_png_path, bbox_inches="tight", dpi=150)
+        fig.savefig(
+            lime_png_path,
+            bbox_inches="tight",
+            dpi=150,
+        )
         plt.close(fig)
 
-        print(f"  [OK] LIME HTML saved -> {lime_html_path}")
-        print(f"  [OK] LIME PNG saved -> {lime_png_path}")
+        print(f"[OK] LIME HTML saved -> {lime_html_path}")
+        print(f"[OK] LIME PNG saved -> {lime_png_path}")
 
         return explanation
 
     except Exception as e:
-        print(f"  [WARNING] LIME explanation skipped: {e}")
+        print(f"[WARNING] LIME explanation skipped: {e}")
         return None
-
 
 # SAVE METRICS
 
 def save_metrics(results):
-    """Save model evaluation metrics as JSON."""
+    """Save metrics to models/metrics.json."""
 
     metrics_path = os.path.join(MODELS_DIR, "metrics.json")
 
@@ -388,19 +431,15 @@ def save_metrics(results):
 
     print(f"[OK] Metrics saved -> {metrics_path}")
 
-
 # MODEL REGISTRY
 
 def register_best_model(results: list):
     """
-    Register production model artifacts in Hopsworks Model Registry.
+    Register GradientBoost as the production model in Hopsworks Model Registry.
 
-    GradientBoost is registered as the production model for consistency with:
-    - Streamlit dashboard sklearn model loading
-    - SHAP/LIME explainability
-    - 72-hour AQI forecasting target
-
-    LSTM remains an experimental comparison model.
+    Important:
+    No comma should be placed after create_model(...).
+    Otherwise hw_model becomes a tuple and hw_model.save() fails.
     """
 
     if not HOPSWORKS_KEY:
@@ -426,21 +465,19 @@ def register_best_model(results: list):
             "mae": best["mae"],
             "r2": best["r2"],
         },
-        description=f"Best model: {best['model']}"
-        ),
-    
+        description=f"Best model: {best['model']}",
+    )
 
     hw_model.save(MODELS_DIR)
 
-    print("[OK] Production model artifacts registered in Hopsworks Model Registry")
+    print("[OK] Model artifacts registered in Hopsworks Model Registry")
 
     return best
-
 
 # MAIN PIPELINE
 
 def run():
-    """Run the full training pipeline."""
+    """Run complete training pipeline."""
 
     print("=== Training Pipeline Started ===")
 
@@ -448,12 +485,9 @@ def run():
 
     X_train, X_test, y_train, y_test = prepare_data(df)
 
-    print(f"Train shape: {X_train.shape}")
-    print(f"Test shape: {X_test.shape}")
-
     all_results = []
 
-    sklearn_results, sklearn_trained = train_sklearn_models(
+    sklearn_results, sklearn_models = train_sklearn_models(
         X_train,
         X_test,
         y_train,
@@ -472,24 +506,22 @@ def run():
     if lstm_metrics:
         all_results.append(lstm_metrics)
 
-    # Use GradientBoost for production explanations
-    if "GradientBoost" in sklearn_trained:
-        production_model = sklearn_trained["GradientBoost"]
+    production_model = sklearn_models["GradientBoost"]
 
-        print("\nGenerating explanations for production model: GradientBoost")
+    print("\nGenerating explanations for production model: GradientBoost")
 
-        explain_model(
-            production_model,
-            X_test,
-            FEATURE_COLS,
-        )
+    explain_model_shap(
+        production_model,
+        X_test,
+        FEATURE_COLS,
+    )
 
-        run_lime_explanation(
-            production_model,
-            X_train,
-            X_test,
-            FEATURE_COLS,
-        )
+    explain_model_lime(
+        production_model,
+        X_train,
+        X_test,
+        FEATURE_COLS,
+    )
 
     save_metrics(all_results)
 

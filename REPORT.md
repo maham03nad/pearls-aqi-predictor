@@ -180,6 +180,14 @@ AQI health reference
 - Live rows do not contain future target values because future AQI is unknown at insertion time.
 - Historical future target values are generated from past data using time-based shifting.
 
+## Project Links
+
+- GitHub Repository: https://github.com/maham03nad/pearls-aqi-predictor
+- Live Streamlit Dashboard: https://pearls-aqi-predictor-5zku3wspc4pufnzbptlxqz.streamlit.app
+- Dashboard Source Code: `streamlit.app/app.py`
+- Project Report: `REPORT.md`
+- EDA Notebook: `eda.ipynb`
+
 ## Conclusion
 
 This project successfully implements an end-to-end AQI prediction system for Karachi with automated data pipelines, Hopsworks Feature Store, Hopsworks Model Registry, explainability using SHAP and LIME, and an interactive Streamlit dashboard for real-time and forecasted AQI monitoring.

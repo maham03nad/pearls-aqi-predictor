@@ -7,7 +7,7 @@ Project collects AQI, pollutant, and weather data, creates machine learning feat
 
 Streamlit Dashboard:
 
-- [Live Streamlit Dashboard](https://pearls-aqi-predictor-vanjmdtr4gorcqmmpmpdhf.streamlit.app)
+- [Live Streamlit Dashboard](https://pearls-aqi-predictor-5zku3wspc4pufnzbptlxqz.streamlit.app/)
 
 GitHub Repository:
 
